@@ -1,0 +1,242 @@
+{
+  "skill_name": "ghost-commit",
+  "version": "1.0.0",
+  "description": "Test cases for ghost-commit skill. Covers diff classification, context reading, output generation, and edge cases.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "bug-fix-with-full-context",
+      "category": "FULL_FLOW",
+      "description": "Fix commit with full .ghost-context provided — should produce rich decision log",
+      "input": {
+        "diff_summary": "src/auth/session.py: -8 +23 lines. Changed Redis TTL from seconds to milliseconds.",
+        "staged_files": ["src/auth/session.py", "tests/test_session.py"],
+        "ghost_context": {
+          "why": "Fixing session timeout bug reported in #847. Sessions were expiring 1000x faster than intended because TTL was set in seconds but Redis PEXPIRE expects milliseconds.",
+          "tried": "Tried patching the client side first but the value is also consumed by the webhook service we don't control.",
+          "constraints": "Can't change the Redis key format without a migration. Keeping this minimal.",
+          "references": "#847"
+        },
+        "branch": "fix/847-session-timeout"
+      },
+      "expected_outputs": {
+        "commit_message_type": "fix",
+        "commit_message_scope": "session",
+        "commit_message_contains": ["TTL", "session", "Redis"],
+        "commit_message_footer": "Closes #847",
+        "decision_log_quality": "HIGH",
+        "decision_log_sections_populated": ["context", "decision", "alternatives", "constraints"],
+        "changelog_category": "Fixed",
+        "pr_description_generated": true
+      },
+      "assertions": [
+        {"id": "e1-1", "text": "Commit type is fix", "check": "type == 'fix'"},
+        {"id": "e1-2", "text": "Scope is session", "check": "scope == 'session'"},
+        {"id": "e1-3", "text": "Closes #847 in footer", "check": "'Closes #847' in commit_message"},
+        {"id": "e1-4", "text": "Decision log quality is HIGH", "check": "context_quality == 'HIGH'"},
+        {"id": "e1-5", "text": "CHANGELOG entry is in Fixed category", "check": "changelog_category == 'Fixed'"},
+        {"id": "e1-6", "text": "PR description generated for fix/ branch", "check": "pr_description is not None"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "new-feature-no-context",
+      "category": "NO_CONTEXT",
+      "description": "New feature commit with no .ghost-context — should infer from diff and note low quality",
+      "input": {
+        "diff_summary": "src/api/users.py: +45 lines. New POST /api/users/export endpoint added.",
+        "staged_files": ["src/api/users.py", "src/api/routes.py"],
+        "ghost_context": null,
+        "branch": "feature/user-export"
+      },
+      "expected_outputs": {
+        "commit_message_type": "feat",
+        "commit_message_scope": "api",
+        "decision_log_quality": "LOW",
+        "decision_log_mentions_no_context": true,
+        "changelog_category": "Added"
+      },
+      "assertions": [
+        {"id": "e2-1", "text": "Type is feat for new endpoint", "check": "type == 'feat'"},
+        {"id": "e2-2", "text": "Context quality is LOW without .ghost-context", "check": "context_quality == 'LOW'"},
+        {"id": "e2-3", "text": "Decision log notes missing context", "check": "'ghost-context' in decision_log or 'Inferred' in decision_log"},
+        {"id": "e2-4", "text": "CHANGELOG entry is in Added category", "check": "changelog_category == 'Added'"}
+      ]
+    },
+    {
+      "id": 3,
+      "name": "breaking-change-api",
+      "category": "BREAKING",
+      "description": "API breaking change — function signature removed, must include BREAKING CHANGE footer",
+      "input": {
+        "diff": "diff showing removal of public function get_user(id) and replacement with get_user(id, include_deleted=False)",
+        "staged_files": ["src/api/users.py"],
+        "ghost_context": {
+          "why": "Added include_deleted parameter to support audit log requirements.",
+          "constraints": "All existing callers must be updated to pass include_deleted explicitly."
+        },
+        "branch": "feat/user-audit"
+      },
+      "expected_outputs": {
+        "commit_message_type": "feat",
+        "commit_message_has_breaking_bang": true,
+        "commit_message_footer_contains": "BREAKING CHANGE",
+        "risk_level": "High"
+      },
+      "assertions": [
+        {"id": "e3-1", "text": "Breaking change detected from diff", "check": "breaking_change == True"},
+        {"id": "e3-2", "text": "Commit message includes ! after type", "check": "commit_message.startswith('feat!')"},
+        {"id": "e3-3", "text": "BREAKING CHANGE in footer", "check": "'BREAKING CHANGE' in commit_message"}
+      ]
+    },
+    {
+      "id": 4,
+      "name": "high-risk-auth-change",
+      "category": "RISK",
+      "description": "Auth-related change should be classified as High risk",
+      "input": {
+        "staged_files": ["src/auth/jwt_handler.py", "src/auth/middleware.py"],
+        "diff_summary": "Changed JWT token validation logic and signing algorithm",
+        "ghost_context": null,
+        "branch": "fix/jwt-algorithm"
+      },
+      "expected_outputs": {
+        "risk_level": "High",
+        "decision_log_type": "high_risk_variant"
+      },
+      "assertions": [
+        {"id": "e4-1", "text": "Risk level is High for auth files", "check": "risk_level == 'High'"},
+        {"id": "e4-2", "text": "High-risk decision log template used", "check": "'HIGH RISK' in decision_log"}
+      ]
+    },
+    {
+      "id": 5,
+      "name": "test-only-commit",
+      "category": "TEST_COMMIT",
+      "description": "Only test files changed — type should be test, no CHANGELOG entry",
+      "input": {
+        "staged_files": ["tests/test_auth.py", "tests/fixtures/user_fixtures.py"],
+        "diff_summary": "Added 15 new test cases for auth module",
+        "ghost_context": null,
+        "branch": "test/auth-coverage"
+      },
+      "expected_outputs": {
+        "commit_message_type": "test",
+        "changelog_category": null,
+        "changelog_entry_generated": false
+      },
+      "assertions": [
+        {"id": "e5-1", "text": "Type is test for test-only files", "check": "type == 'test'"},
+        {"id": "e5-2", "text": "No CHANGELOG entry for test commits", "check": "changelog_category is None"}
+      ]
+    },
+    {
+      "id": 6,
+      "name": "merge-commit-skip",
+      "category": "SKIP",
+      "description": "Merge commit detected — ghost-commit should exit cleanly without generating outputs",
+      "input": {
+        "is_merge_commit": true,
+        "merge_head_exists": true
+      },
+      "expected_outputs": {
+        "action": "skip",
+        "exit_code": 0,
+        "outputs_generated": false
+      },
+      "assertions": [
+        {"id": "e6-1", "text": "ghost-commit skips on merge commit", "check": "action == 'skip'"},
+        {"id": "e6-2", "text": "Exit code is 0 (never blocks commit)", "check": "exit_code == 0"}
+      ]
+    },
+    {
+      "id": 7,
+      "name": "skip-branch-pattern",
+      "category": "SKIP",
+      "description": "Commit on main branch — should skip per default config",
+      "input": {
+        "branch": "main",
+        "staged_files": ["README.md"],
+        "skip_branches_config": ["main", "master"]
+      },
+      "expected_outputs": {
+        "action": "skip",
+        "reason": "branch matches skip pattern"
+      },
+      "assertions": [
+        {"id": "e7-1", "text": "Skips on main branch", "check": "action == 'skip'"},
+        {"id": "e7-2", "text": "Skip reason mentions branch", "check": "'branch' in reason or 'main' in reason"}
+      ]
+    },
+    {
+      "id": 8,
+      "name": "monorepo-scope",
+      "category": "SCOPE",
+      "description": "Monorepo commit touching one package — scope should be package name",
+      "input": {
+        "staged_files": [
+          "packages/auth-service/src/handlers.py",
+          "packages/auth-service/tests/test_handlers.py",
+          "packages/auth-service/README.md"
+        ],
+        "diff_summary": "Added OAuth2 handler to auth-service"
+      },
+      "expected_outputs": {
+        "scope": "auth-service",
+        "commit_message_contains": "auth-service"
+      },
+      "assertions": [
+        {"id": "e8-1", "text": "Scope detected as auth-service", "check": "scope == 'auth-service'"}
+      ]
+    },
+    {
+      "id": 9,
+      "name": "changelog-insertion",
+      "category": "CHANGELOG",
+      "description": "CHANGELOG update should insert under correct category in [Unreleased] section",
+      "input": {
+        "existing_changelog": "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Previous fix entry\n\n## [1.0.0] - 2026-01-01\n",
+        "new_entry": "- Fix session timeout calculation",
+        "category": "Fixed"
+      },
+      "expected_outputs": {
+        "entry_inserted_under_unreleased": true,
+        "entry_inserted_under_fixed": true,
+        "existing_entries_preserved": true,
+        "versioned_sections_unchanged": true
+      },
+      "assertions": [
+        {"id": "e9-1", "text": "New entry appears under [Unreleased] Fixed", "check": "entry in unreleased_fixed_section"},
+        {"id": "e9-2", "text": "Previous Fixed entry preserved", "check": "'Previous fix entry' in changelog"},
+        {"id": "e9-3", "text": "[1.0.0] section unchanged", "check": "'## [1.0.0]' in changelog"}
+      ]
+    },
+    {
+      "id": 10,
+      "name": "large-diff-handling",
+      "category": "EDGE_CASE",
+      "description": "Diff with 600+ line changes should summarize by file and warn about large commit",
+      "input": {
+        "insertions": 400,
+        "deletions": 250,
+        "staged_files": ["src/core/engine.py", "src/core/parser.py", "src/core/validator.py"],
+        "ghost_context": null
+      },
+      "expected_outputs": {
+        "commit_message_mentions_files": true,
+        "decision_log_warns_large_commit": true
+      },
+      "assertions": [
+        {"id": "e10-1", "text": "Large diff warning appears in decision log", "check": "'large commit' in decision_log.lower() or '600' in decision_log or 'split' in decision_log.lower()"},
+        {"id": "e10-2", "text": "Analysis still completes successfully", "check": "type is not None"}
+      ]
+    }
+  ],
+  "test_utilities": {
+    "run_diff_analyzer": "python skill/scripts/diff_analyzer.py --staged --pretty",
+    "run_context_reader": "python skill/scripts/context_reader.py --status",
+    "run_full": "python skill/scripts/ghost_commit.py --run",
+    "check_status": "python skill/scripts/install_hook.py --status",
+    "test_changelog_insert": "python skill/scripts/output_writer.py changelog --entry '- Test entry' --category Fixed"
+  }
+}
